@@ -264,6 +264,10 @@ async def transcribe_file(
                     data = json.loads(msg)
                     recv_time = time.perf_counter() - start_time
 
+                    # Log raw message for debugging
+                    if debug:
+                        print(f"[DEBUG RAW] {msg[:200]}{'...' if len(msg) > 200 else ''}")
+
                     if data.get("type") == "ready":
                         if verbose:
                             print(f"[{recv_time:.3f}s] Stream ready, session_id: {data.get('session_id')}")
