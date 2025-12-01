@@ -15,16 +15,13 @@ import base64
 import json
 import os
 import re
-import struct
 import time
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 import websockets
 from dotenv import load_dotenv
-from scipy import signal
 
 # Load environment variables from .env file
 load_dotenv()
@@ -78,45 +75,6 @@ def read_wav_file(file_path: str) -> tuple[bytes, int, int]:
 
         pcm_data = wf.readframes(num_frames)
         return pcm_data, sample_rate, num_frames
-
-
-def preprocess_audio(pcm_data: bytes, sample_rate: int) -> bytes:
-    """
-    Apply audio preprocessing similar to browser's getUserMedia:
-    - Auto gain control (normalization)
-    - High-pass filter (removes DC offset and low rumble)
-    - Soft noise gate
-    """
-    # Convert bytes to numpy array
-    samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-
-    # 1. Remove DC offset
-    samples = samples - np.mean(samples)
-
-    # 2. High-pass filter at 80Hz (removes rumble, like browser does)
-    nyquist = sample_rate / 2
-    high_cutoff = 80 / nyquist
-    if high_cutoff < 1:
-        b, a = signal.butter(2, high_cutoff, btype='high')
-        samples = signal.filtfilt(b, a, samples)
-
-    # 3. Auto gain control - normalize to target RMS
-    rms = np.sqrt(np.mean(samples ** 2))
-    if rms > 0:
-        # Target RMS around 3000 (out of 32768 max) - moderate level
-        target_rms = 3000
-        gain = target_rms / rms
-        # Limit gain to avoid amplifying noise too much
-        gain = min(gain, 10.0)
-        samples = samples * gain
-
-    # 4. Soft clipping to avoid harsh distortion
-    samples = np.tanh(samples / 32768) * 32768
-
-    # 5. Convert back to int16
-    samples = np.clip(samples, -32768, 32767).astype(np.int16)
-
-    return samples.tobytes()
 
 
 def pcm_to_base64(pcm_data: bytes) -> str:
@@ -194,7 +152,6 @@ async def transcribe_file(
     verbose: bool = True,
     debug: bool = False,
     log_dir: Path | None = None,
-    preprocess: bool = False,
 ) -> BenchmarkResult:
     """
     Transcribe a single WAV file with the specified model.
@@ -208,13 +165,6 @@ async def transcribe_file(
         print(f"{'=' * 60}")
 
     pcm_data, sample_rate, num_samples = read_wav_file(wav_path)
-
-    # Apply preprocessing if enabled (simulates browser's getUserMedia processing)
-    if preprocess:
-        if verbose:
-            print(f"Applying audio preprocessing (AGC, high-pass filter)...")
-        pcm_data = preprocess_audio(pcm_data, sample_rate)
-
     audio_duration_s = num_samples / sample_rate
     if verbose:
         print(f"Audio duration: {audio_duration_s:.2f}s")
@@ -491,7 +441,6 @@ async def process_files(
     verbose: bool,
     debug: bool = False,
     log_dir: Path | None = None,
-    preprocess: bool = False,
 ) -> list[BenchmarkResult]:
     """Process multiple WAV files with multiple models."""
     results: list[BenchmarkResult] = []
@@ -506,7 +455,6 @@ async def process_files(
                     verbose=verbose,
                     debug=debug,
                     log_dir=log_dir,
-                    preprocess=preprocess,
                 )
                 results.append(result)
 
@@ -596,11 +544,6 @@ Examples:
         help="Directory to save detailed log files (e.g., logs/)",
     )
     parser.add_argument(
-        "--preprocess",
-        action="store_true",
-        help="Apply audio preprocessing (AGC, high-pass filter) like browser does",
-    )
-    parser.add_argument(
         "--chunk",
         type=int,
         default=200,
@@ -638,8 +581,6 @@ Examples:
     log_dir = Path(args.logs) if args.logs else None
     if log_dir:
         print(f"Logs: {log_dir}")
-    if args.preprocess:
-        print(f"Preprocess: enabled (AGC, high-pass filter)")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -651,7 +592,6 @@ Examples:
         verbose=not args.quiet,
         debug=args.debug,
         log_dir=log_dir,
-        preprocess=args.preprocess,
     )
 
     # Summary
